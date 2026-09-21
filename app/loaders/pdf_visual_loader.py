@@ -62,9 +62,6 @@ def load_pdf_visual(
 
                 plumber_page = plumber_pdf.pages[page_number - 1]
 
-                # --------------------------------------------------
-                # 1. Extract embedded images
-                # --------------------------------------------------
 
                 images = page.get_images(full=True)
 
@@ -133,10 +130,6 @@ def load_pdf_visual(
                             exc,
                         )
 
-                # --------------------------------------------------
-                # 2. Extract tables
-                # --------------------------------------------------
-
                 try:
                     tables = plumber_page.extract_tables()
                 except Exception as exc:
@@ -197,9 +190,6 @@ def load_pdf_visual(
                         )
                     )
 
-                # --------------------------------------------------
-                # 3. Detect vector drawings / possible diagrams
-                # --------------------------------------------------
 
                 drawings = page.get_drawings()
 
