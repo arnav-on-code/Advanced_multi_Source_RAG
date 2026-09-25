@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import hashlib
 import json
 from pathlib import Path
@@ -10,7 +8,6 @@ from langchain_core.documents import Document
 
 SUPPORTED_SOURCE_TYPES = {
     "pdf",
-    "pdf_visual",
     "url",
     "youtube",
     "docx",
@@ -20,8 +17,9 @@ SUPPORTED_SOURCE_TYPES = {
 }
 
 
-def _stable_hash(value: str, length: int = 16) -> str:
-    """Generate a stable SHA-256 based identifier."""
+def _stable_hash(value: str, length: int = 24) -> str:
+    """Generate a deterministic SHA-256 identifier."""
+
     return hashlib.sha256(
         value.encode("utf-8")
     ).hexdigest()[:length]
@@ -33,6 +31,9 @@ def _normalize_value(value: Any) -> Any:
     if value is None:
         return None
 
+    if isinstance(value, bytes):
+        return None
+
     if isinstance(value, Path):
         return str(value)
 
@@ -40,21 +41,13 @@ def _normalize_value(value: Any) -> Any:
         return value
 
     if isinstance(value, (list, tuple)):
-        return [
-            _normalize_value(item)
-            for item in value
-        ]
+        return [_normalize_value(item) for item in value]
 
     if isinstance(value, dict):
         return {
             str(key): _normalize_value(item)
             for key, item in value.items()
         }
-
-    # Avoid storing raw binary data such as extracted image bytes
-    # directly in Chroma metadata.
-    if isinstance(value, bytes):
-        return None
 
     try:
         json.dumps(value)
@@ -63,37 +56,30 @@ def _normalize_value(value: Any) -> Any:
         return str(value)
 
 
-def create_document_id(
-    document: Document,
-) -> str:
+def create_document_id(document: Document) -> str:
     """
-    Create a deterministic ID for a source document.
+    Create a deterministic ID for the complete source document.
 
-    The same source and content produce the same ID,
-    which helps with deduplication.
+    The ID is based on source type, source, and document content.
     """
 
     metadata = document.metadata
 
+    source_type = str(
+        metadata.get("source_type", "unknown")
+    ).lower()
+
     source = str(
         metadata.get("source", "")
-    )
-
-    source_type = str(
-        metadata.get("source_type", "")
-    )
+    ).strip()
 
     content_hash = hashlib.sha256(
         document.page_content.encode("utf-8")
     ).hexdigest()
 
-    raw_id = (
-        f"{source_type}|"
-        f"{source}|"
-        f"{content_hash}"
+    return _stable_hash(
+        f"{source_type}|{source}|{content_hash}"
     )
-
-    return _stable_hash(raw_id, length=24)
 
 
 def create_chunk_id(
@@ -103,79 +89,12 @@ def create_chunk_id(
     """Create a deterministic ID for a document chunk."""
 
     return _stable_hash(
-        f"{document_id}|chunk|{chunk_index}",
-        length=24,
+        f"{document_id}|chunk|{chunk_index}"
     )
 
 
-def enrich_metadata(
-    document: Document,
-    *,
-    chunk_index: int | None = None,
-) -> Document:
-    """
-    Normalize and enrich metadata for downstream RAG processing.
-
-    Adds:
-        - source_type
-        - source
-        - document_id
-        - chunk_id
-        - has_text
-        - citation information
-    """
-
-    metadata = {
-        key: _normalize_value(value)
-        for key, value in document.metadata.items()
-    }
-
-    source_type = str(
-        metadata.get("source_type", "unknown")
-    ).lower()
-
-    if source_type not in SUPPORTED_SOURCE_TYPES:
-        source_type = "unknown"
-
-    source = str(
-        metadata.get("source", "")
-    ).strip()
-
-    document.metadata = metadata
-
-    document.metadata["source_type"] = source_type
-    document.metadata["source"] = source
-    document.metadata["has_text"] = bool(
-        document.page_content.strip()
-    )
-
-    document_id = create_document_id(document)
-
-    document.metadata["document_id"] = document_id
-
-    if chunk_index is not None:
-        document.metadata["chunk_index"] = chunk_index
-        document.metadata["chunk_id"] = create_chunk_id(
-            document_id,
-            chunk_index,
-        )
-
-    document.metadata["citation"] = build_citation(
-        document
-    )
-
-    return document
-
-
-def build_citation(
-    document: Document,
-) -> dict[str, Any]:
-    """
-    Build structured citation metadata based on source type.
-
-    This metadata can later be returned by the RAG API
-    alongside the generated answer.
-    """
+def build_citation(document: Document) -> dict[str, Any]:
+    """Build structured citation metadata for a document."""
 
     metadata = document.metadata
 
@@ -194,12 +113,15 @@ def build_citation(
         "source": source,
     }
 
-    if source_type in {"pdf", "pdf_visual"}:
+    if source_type == "pdf":
         if metadata.get("page") is not None:
             citation["page"] = metadata["page"]
 
         if metadata.get("file_name"):
             citation["file_name"] = metadata["file_name"]
+
+        if metadata.get("content_type"):
+            citation["content_type"] = metadata["content_type"]
 
     elif source_type == "youtube":
         if metadata.get("title"):
@@ -229,24 +151,56 @@ def build_citation(
         if metadata.get("file_name"):
             citation["file_name"] = metadata["file_name"]
 
+        if metadata.get("row") is not None:
+            citation["row"] = metadata["row"]
+
     return citation
+
+
+def enrich_metadata(document: Document) -> Document:
+    """
+    Normalize document metadata and assign a deterministic
+    document ID and citation information.
+
+    This function should run before chunking.
+    """
+
+    metadata = {
+        key: _normalize_value(value)
+        for key, value in document.metadata.items()
+    }
+
+    source_type = str(
+        metadata.get("source_type", "unknown")
+    ).lower()
+
+    if source_type not in SUPPORTED_SOURCE_TYPES:
+        source_type = "unknown"
+
+    metadata["source_type"] = source_type
+    metadata["source"] = str(
+        metadata.get("source", "")
+    ).strip()
+
+    document.metadata = metadata
+
+    document.metadata["document_id"] = create_document_id(
+        document
+    )
+
+    document.metadata["citation"] = build_citation(
+        document
+    )
+
+    return document
 
 
 def enrich_documents(
     documents: list[Document],
 ) -> list[Document]:
-    """
-    Enrich a list of documents with standardized metadata.
+    """Normalize and enrich a list of documents."""
 
-    Chunk IDs are intentionally not created here because
-    chunking happens later.
-    """
-
-    enriched_documents = []
-
-    for document in documents:
-        enriched_documents.append(
-            enrich_metadata(document)
-        )
-
-    return enriched_documents
+    return [
+        enrich_metadata(document)
+        for document in documents
+    ]

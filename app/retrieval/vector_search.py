@@ -1,9 +1,8 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
 
 from app.embeddings.embedder import (
     DEFAULT_EMBEDDING_MODEL,
@@ -42,9 +41,7 @@ class VectorSearcher:
         embedding_model: str = DEFAULT_EMBEDDING_MODEL,
     ) -> None:
 
-        embeddings = get_embedding_model(
-            embedding_model
-        )
+        embeddings = get_embedding_model(embedding_model)
 
         self.vectorstore = ChromaVectorStore(
             embedding_function=embeddings,
@@ -58,35 +55,22 @@ class VectorSearcher:
         top_k: int = 5,
         metadata_filter: dict[str, Any] | None = None,
     ) -> list[VectorSearchResult]:
-        """
-        Perform semantic similarity search.
+        """Perform semantic similarity search."""
 
-        Args:
-            query: User's natural-language query.
-            top_k: Maximum number of results.
-            metadata_filter: Optional Chroma metadata filter.
+        query = query.strip()
 
-        Returns:
-            Ranked semantic search results.
-        """
+        if not query:
+            raise ValueError("Search query cannot be empty.")
 
-        if not query or not query.strip():
+        if not 1 <= top_k <= 100:
             raise ValueError(
-                "Search query cannot be empty."
+                "top_k must be between 1 and 100."
             )
 
-        if top_k <= 0:
-            raise ValueError(
-                "top_k must be greater than 0."
-            )
-
-        results = (
-            self.vectorstore
-            .similarity_search_with_score(
-                query=query.strip(),
-                k=top_k,
-                filter=metadata_filter,
-            )
+        results = self.vectorstore.similarity_search_with_score(
+            query=query,
+            k=top_k,
+            filter=metadata_filter,
         )
 
         return [
@@ -103,29 +87,28 @@ class VectorSearcher:
         top_k: int = 5,
         metadata_filter: dict[str, Any] | None = None,
     ) -> list[Document]:
-        """
-        Return only documents from semantic search.
-        """
-
-        results = self.search(
-            query=query,
-            top_k=top_k,
-            metadata_filter=metadata_filter,
-        )
+        """Return only documents from semantic search."""
 
         return [
             result.document
-            for result in results
+            for result in self.search(
+                query=query,
+                top_k=top_k,
+                metadata_filter=metadata_filter,
+            )
         ]
 
     def get_retriever(
         self,
         top_k: int = 5,
         metadata_filter: dict[str, Any] | None = None,
-    ):
-        """
-        Return a LangChain retriever for use in LCEL pipelines.
-        """
+    ) -> BaseRetriever:
+        """Return a LangChain retriever for LCEL pipelines."""
+
+        if not 1 <= top_k <= 100:
+            raise ValueError(
+                "top_k must be between 1 and 100."
+            )
 
         return self.vectorstore.get_retriever(
             k=top_k,
