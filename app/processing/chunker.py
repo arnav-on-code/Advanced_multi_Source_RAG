@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -46,12 +48,21 @@ def chunk_documents(
     """
     Split documents into retrieval-friendly chunks.
 
-    Original document metadata is preserved automatically.
-    Each chunk receives chunk-specific metadata.
+    Original metadata is preserved and each chunk receives
+    its own document ID, chunk index, chunk ID, and size.
     """
 
     if not documents:
         return []
+
+    for document in documents:
+        if not document.page_content.strip():
+            continue
+
+        document.metadata.setdefault(
+            "document_id",
+            uuid4().hex,
+        )
 
     splitter = create_text_splitter(
         chunk_size=chunk_size,
@@ -63,28 +74,25 @@ def chunk_documents(
     document_chunk_counts: dict[str, int] = {}
 
     for chunk in chunks:
-        document_id = chunk.metadata.get("document_id")
+        document_id = chunk.metadata["document_id"]
 
-        if document_id:
-            chunk_index = document_chunk_counts.get(
-                document_id,
-                0,
-            )
+        chunk_index = document_chunk_counts.get(
+            document_id,
+            0,
+        )
 
-            chunk.metadata["chunk_index"] = chunk_index
-            chunk.metadata["chunk_id"] = (
-                f"{document_id}_chunk_{chunk_index}"
-            )
+        chunk.metadata["chunk_index"] = chunk_index
 
-            document_chunk_counts[document_id] = (
-                chunk_index + 1
-            )
-
-        else:
-            chunk.metadata["chunk_index"] = 0
+        chunk.metadata["chunk_id"] = (
+            f"{document_id}_chunk_{chunk_index}"
+        )
 
         chunk.metadata["chunk_size"] = len(
             chunk.page_content
+        )
+
+        document_chunk_counts[document_id] = (
+            chunk_index + 1
         )
 
     return chunks
@@ -95,6 +103,7 @@ def chunk_document(
     chunk_size: int = DEFAULT_CHUNK_SIZE,
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[Document]:
+    """Split a single document into retrieval-friendly chunks."""
 
     return chunk_documents(
         [document],

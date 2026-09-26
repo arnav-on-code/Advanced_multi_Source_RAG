@@ -15,16 +15,7 @@ class BM25SearchResult:
 
 
 class BM25Retriever:
-    """
-    BM25 lexical retriever.
-
-    Useful for:
-        - Exact terms
-        - Names
-        - Identifiers
-        - Technical terminology
-        - Keyword-heavy queries
-    """
+    
 
     def __init__(
         self,
