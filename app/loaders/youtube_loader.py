@@ -41,6 +41,7 @@ def load_youtube(url: str) -> list[Document]:
                 "source_type": "youtube",
                 "source": url,
                 "url": url,
+                "has_text": bool(document.page_content.strip()),
             }
         )
 

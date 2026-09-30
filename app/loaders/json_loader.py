@@ -32,6 +32,7 @@ def load_json(file_path: str | Path) -> list[Document]:
                 "source_type": "json",
                 "source": str(path),
                 "file_name": path.name,
+                "has_text": bool(document.page_content.strip()),
             }
         )
 

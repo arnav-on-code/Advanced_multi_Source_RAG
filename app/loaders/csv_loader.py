@@ -36,6 +36,7 @@ def load_csv(file_path: str | Path) -> list[Document]:
                 "source": str(path),
                 "file_name": path.name,
                 "row": row_number,
+                "has_text": bool(document.page_content.strip()),
             }
         )
 

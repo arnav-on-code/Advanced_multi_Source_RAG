@@ -28,6 +28,7 @@ def load_docx(file_path: str | Path) -> list[Document]:
                 "source_type": "docx",
                 "source": str(path),
                 "file_name": path.name,
+                "has_text": bool(document.page_content.strip()),
             }
         )
 

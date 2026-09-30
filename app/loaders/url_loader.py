@@ -32,6 +32,7 @@ def load_url(url: str) -> list[Document]:
                 "source": url,
                 "url": url,
                 "title": document.metadata.get("title"),
+                "has_text": bool(document.page_content.strip()),
             }
         )
 
