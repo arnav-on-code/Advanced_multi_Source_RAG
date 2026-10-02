@@ -4,10 +4,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.llm.generator import LLMGenerator
-from app.retrieval.hybrid_search import HybridSearchResult
-from app.retrieval.hybrid_search import HybridSearcher
-from app.retrieval.reranker import RerankedResult
-from app.retrieval.reranker import Reranker
+from app.retrieval.hybrid_search import (
+    HybridSearchResult,
+    HybridSearcher,
+)
+from app.retrieval.reranker import (
+    RerankedResult,
+    Reranker,
+)
 
 
 @dataclass
@@ -37,12 +41,6 @@ class RAGPipeline:
             if not 1 <= candidate_k <= 200:
                 raise ValueError(
                     "candidate_k must be between 1 and 200."
-                )
-
-            if candidate_k < retrieval_top_k:
-                raise ValueError(
-                    "candidate_k must be greater than or equal "
-                    "to retrieval_top_k."
                 )
 
         if not 1 <= reranker_top_k <= 100:
@@ -89,16 +87,18 @@ class RAGPipeline:
                 "top_k must be between 1 and 100."
             )
 
-        candidate_k = self.candidate_k
-
-        if candidate_k is None:
+        # Candidate retrieval should always provide
+        # enough documents for reranking.
+        if self.candidate_k is None:
             candidate_k = max(
                 resolved_top_k * 3,
                 10,
             )
-
-        if candidate_k < resolved_top_k:
-            candidate_k = resolved_top_k
+        else:
+            candidate_k = max(
+                self.candidate_k,
+                resolved_top_k,
+            )
 
         hybrid_results = self.hybrid_searcher.search(
             query=query,
@@ -111,14 +111,16 @@ class RAGPipeline:
             return self._empty_response()
 
         if use_reranking:
+            rerank_k = min(
+                resolved_top_k,
+                self.reranker_top_k,
+                len(hybrid_results),
+            )
+
             reranked_results = self.reranker.rerank(
                 query=query,
                 results=hybrid_results,
-                top_k=min(
-                    resolved_top_k,
-                    self.reranker_top_k,
-                    len(hybrid_results),
-                ),
+                top_k=rerank_k,
             )
 
             if not reranked_results:

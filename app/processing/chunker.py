@@ -1,7 +1,9 @@
-from uuid import uuid4
+from __future__ import annotations
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from app.processing.metadata import create_chunk_id
 
 
 DEFAULT_CHUNK_SIZE = 800
@@ -15,11 +17,18 @@ def create_text_splitter(
     """Create the default text splitter for the RAG pipeline."""
 
     if chunk_size <= 0:
-        raise ValueError("chunk_size must be greater than 0.")
-
-    if not 0 <= chunk_overlap < chunk_size:
         raise ValueError(
-            "chunk_overlap must be >= 0 and smaller than chunk_size."
+            "chunk_size must be greater than 0."
+        )
+
+    if chunk_overlap < 0:
+        raise ValueError(
+            "chunk_overlap cannot be negative."
+        )
+
+    if chunk_overlap >= chunk_size:
+        raise ValueError(
+            "chunk_overlap must be smaller than chunk_size."
         )
 
     return RecursiveCharacterTextSplitter(
@@ -48,21 +57,31 @@ def chunk_documents(
     """
     Split documents into retrieval-friendly chunks.
 
-    Original metadata is preserved and each chunk receives
-    its own document ID, chunk index, chunk ID, and size.
+    Each document must contain a document_id in its metadata.
+    Chunk IDs are deterministic and derived from document_id
+    and chunk index.
     """
 
     if not documents:
         return []
 
+    # Validate before creating the splitter.
     for document in documents:
+        if not isinstance(document, Document):
+            raise TypeError(
+                "documents must contain only LangChain Document objects."
+            )
+
         if not document.page_content.strip():
             continue
 
-        document.metadata.setdefault(
-            "document_id",
-            uuid4().hex,
-        )
+        document_id = document.metadata.get("document_id")
+
+        if not document_id:
+            raise ValueError(
+                "Each non-empty document must contain "
+                "'document_id' in metadata before chunking."
+            )
 
     splitter = create_text_splitter(
         chunk_size=chunk_size,
@@ -74,7 +93,14 @@ def chunk_documents(
     document_chunk_counts: dict[str, int] = {}
 
     for chunk in chunks:
-        document_id = chunk.metadata["document_id"]
+        document_id = chunk.metadata.get("document_id")
+
+        if not document_id:
+            raise ValueError(
+                "Chunk is missing 'document_id' metadata."
+            )
+
+        document_id = str(document_id)
 
         chunk_index = document_chunk_counts.get(
             document_id,
@@ -83,8 +109,9 @@ def chunk_documents(
 
         chunk.metadata["chunk_index"] = chunk_index
 
-        chunk.metadata["chunk_id"] = (
-            f"{document_id}_chunk_{chunk_index}"
+        chunk.metadata["chunk_id"] = create_chunk_id(
+            document_id=document_id,
+            chunk_index=chunk_index,
         )
 
         chunk.metadata["chunk_size"] = len(
@@ -104,6 +131,11 @@ def chunk_document(
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
 ) -> list[Document]:
     """Split a single document into retrieval-friendly chunks."""
+
+    if not isinstance(document, Document):
+        raise TypeError(
+            "document must be a LangChain Document."
+        )
 
     return chunk_documents(
         [document],

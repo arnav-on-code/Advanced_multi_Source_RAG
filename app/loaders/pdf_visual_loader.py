@@ -25,24 +25,6 @@ def load_pdf_visual(
         - Vector drawing information
 
     Normal PDF text extraction is handled by pdf_loader.py.
-
-    Args:
-        file_path: Path to the PDF file.
-        output_dir: Directory used to store extracted images.
-
-    Returns:
-        List of LangChain Documents containing visual/structured
-        content and metadata.
-
-    Raises:
-        FileNotFoundError:
-            If the PDF does not exist.
-
-        ValueError:
-            If the file is not a PDF.
-
-        RuntimeError:
-            If the PDF cannot be opened or processed.
     """
 
     path = Path(file_path)
@@ -62,7 +44,6 @@ def load_pdf_visual(
         )
 
     output_path = Path(output_dir)
-
     image_dir = output_path / path.stem
 
     try:
@@ -79,9 +60,6 @@ def load_pdf_visual(
     documents: list[Document] = []
 
     # Cache extracted images by PDF XRef.
-    #
-    # The same embedded image can appear on multiple pages.
-    # We extract it only once and reuse the generated file.
     extracted_images: dict[int, Path] = {}
 
     # ---------------------------------------------------------
@@ -93,9 +71,6 @@ def load_pdf_visual(
             fitz.open(path) as pdf,
             pdfplumber.open(path) as plumber_pdf,
         ):
-
-            # Ensure the two PDF readers expose the same
-            # number of pages.
             if len(pdf) != len(plumber_pdf.pages):
                 logger.warning(
                     "Page count mismatch for '%s': "
@@ -113,22 +88,16 @@ def load_pdf_visual(
                 pdf,
                 start=1,
             ):
-
-                # ---------------------------------------------
-                # PDFPLUMBER PAGE
-                # ---------------------------------------------
-
                 plumber_page = None
 
                 if page_number <= len(plumber_pdf.pages):
                     plumber_page = (
-                        plumber_pdf.pages[page_number - 1]
+                        plumber_pdf.pages[
+                            page_number - 1
+                        ]
                     )
 
-                # ---------------------------------------------
-                # IMAGES
-                # ---------------------------------------------
-
+                # Images
                 documents.extend(
                     _extract_images(
                         pdf=pdf,
@@ -140,10 +109,7 @@ def load_pdf_visual(
                     )
                 )
 
-                # ---------------------------------------------
-                # TABLES
-                # ---------------------------------------------
-
+                # Tables
                 if plumber_page is not None:
                     documents.extend(
                         _extract_tables(
@@ -153,10 +119,7 @@ def load_pdf_visual(
                         )
                     )
 
-                # ---------------------------------------------
-                # VECTOR DRAWINGS
-                # ---------------------------------------------
-
+                # Vector drawings
                 documents.extend(
                     _extract_drawings(
                         page=page,
@@ -167,7 +130,6 @@ def load_pdf_visual(
 
     except (
         fitz.FileDataError,
-        pdfplumber.pdfminer.pdfparser.PDFSyntaxError,
         OSError,
     ) as exc:
         raise RuntimeError(
@@ -216,7 +178,6 @@ def _extract_images(
         images,
         start=1,
     ):
-
         if not image_info:
             continue
 
@@ -234,7 +195,8 @@ def _extract_images(
                 image_path = extracted_images[xref]
 
                 image_ext = (
-                    image_path.suffix.lstrip(".")
+                    image_path.suffix
+                    .lstrip(".")
                 )
 
             # ---------------------------------------------
@@ -277,7 +239,7 @@ def _extract_images(
                 extracted_images[xref] = image_path
 
             # ---------------------------------------------
-            # DOCUMENT
+            # CREATE DOCUMENT
             # ---------------------------------------------
 
             documents.append(
@@ -295,6 +257,7 @@ def _extract_images(
                         "page": page_number,
                         "image_index": image_index,
                         "image_xref": xref,
+                        "path": str(image_path),
                         "image_path": str(image_path),
                         "image_extension": image_ext,
                         "processed": False,
@@ -345,30 +308,28 @@ def _extract_tables(
             source_path.name,
             exc,
         )
-
         return documents
 
     for table_index, table in enumerate(
         tables,
         start=1,
     ):
-
         if not table:
             continue
 
         rows: list[list[str]] = []
 
         for row in table:
-
             if not row:
                 continue
 
             cleaned_row = [
-                str(cell).strip() if cell is not None else ""
+                str(cell).strip()
+                if cell is not None
+                else ""
                 for cell in row
             ]
 
-            # Ignore completely empty rows.
             if not any(cleaned_row):
                 continue
 
@@ -428,7 +389,6 @@ def _extract_drawings(
             source_path.name,
             exc,
         )
-
         return []
 
     if not drawings:

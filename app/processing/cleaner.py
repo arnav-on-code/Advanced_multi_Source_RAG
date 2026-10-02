@@ -8,28 +8,19 @@ from langchain_core.documents import Document
 # Matches spaces and tabs without touching newlines.
 _HORIZONTAL_WHITESPACE = re.compile(r"[ \t]+")
 
-# Removes indentation after a newline.
+# Removes indentation immediately after a newline.
 _LINE_INDENTATION = re.compile(r"\n[ \t]+")
+
+# Removes spaces/tabs immediately before or after a newline.
+_SPACES_AROUND_NEWLINES = re.compile(r"[ \t]*\n[ \t]*")
 
 # Maximum of one blank line between paragraphs.
 _EXCESSIVE_NEWLINES = re.compile(r"\n{3,}")
-
-# Removes spaces immediately before/after line breaks.
-_SPACES_AROUND_NEWLINES = re.compile(r"[ \t]*\n[ \t]*")
 
 
 def clean_text(text: str) -> str:
     """
     Normalize extracted text while preserving paragraph structure.
-
-    Operations:
-        - Normalize line endings.
-        - Remove null characters.
-        - Normalize spaces and tabs.
-        - Remove indentation after line breaks.
-        - Remove excessive blank lines.
-        - Remove spaces around line breaks.
-        - Strip leading/trailing whitespace.
     """
 
     if not text:
@@ -41,10 +32,10 @@ def clean_text(text: str) -> str:
     # Remove null characters.
     text = text.replace("\x00", "")
 
-    # Normalize horizontal whitespace.
+    # Normalize spaces and tabs.
     text = _HORIZONTAL_WHITESPACE.sub(" ", text)
 
-    # Remove spaces/tabs immediately after newlines.
+    # Remove indentation after line breaks.
     text = _LINE_INDENTATION.sub("\n", text)
 
     # Remove spaces around line breaks.
@@ -64,28 +55,11 @@ def clean_document(document: Document) -> Document:
     """
 
     if not isinstance(document, Document):
-        raise TypeError(
-            "document must be a LangChain Document."
-        )
-
-    cleaned_content = clean_text(
-        document.page_content
-    )
-
-    metadata = dict(document.metadata)
-
-    if not cleaned_content:
-        metadata["has_text"] = False
-        metadata["content_length"] = 0
-    else:
-        metadata["has_text"] = True
-        metadata["content_length"] = len(
-            cleaned_content
-        )
+        raise TypeError("document must be a LangChain Document.")
 
     return Document(
-        page_content=cleaned_content,
-        metadata=metadata,
+        page_content=clean_text(document.page_content),
+        metadata=dict(document.metadata),
     )
 
 

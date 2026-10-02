@@ -5,7 +5,7 @@ from langchain_core.documents import Document
 
 
 def load_json(file_path: str | Path) -> list[Document]:
-    """Load a JSON file as LangChain Documents."""
+    """Load a JSON file into LangChain Documents."""
 
     path = Path(file_path)
 
@@ -16,23 +16,28 @@ def load_json(file_path: str | Path) -> list[Document]:
         raise ValueError(f"Expected a JSON file, got: {path.suffix}")
 
     try:
-        documents = JSONLoader(
+        loader = JSONLoader(
             file_path=str(path),
             jq_schema=".",
             text_content=False,
-        ).load()
+        )
+
+        documents = loader.load()
+
     except Exception as exc:
         raise RuntimeError(
             f"Failed to load JSON '{path}': {exc}"
         ) from exc
 
     for document in documents:
+        text = document.page_content.strip()
+
         document.metadata.update(
             {
                 "source_type": "json",
                 "source": str(path),
                 "file_name": path.name,
-                "has_text": bool(document.page_content.strip()),
+                "has_text": bool(text),
             }
         )
 

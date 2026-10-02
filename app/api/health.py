@@ -15,13 +15,7 @@ router = APIRouter(
     response_model=HealthResponse,
 )
 async def health_check() -> HealthResponse:
-    """
-    Liveness check.
-
-    Confirms that the API process is running.
-    Designed for Docker, nginx, AWS, and orchestration
-    health checks.
-    """
+    """Return the liveness status of the API."""
 
     return HealthResponse(
         status="healthy",
@@ -36,16 +30,7 @@ async def health_check() -> HealthResponse:
     response_model=HealthResponse,
 )
 async def readiness_check() -> HealthResponse:
-    """
-    Readiness check.
-
-    Confirms that the application is initialized and
-    able to accept requests.
-
-    Dependency-specific checks can be added here when
-    ChromaDB, embedding models, and the LLM are initialized
-    as managed application services.
-    """
+    """Return the readiness status of the API."""
 
     return HealthResponse(
         status="ready",
