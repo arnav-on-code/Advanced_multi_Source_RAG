@@ -15,8 +15,9 @@ from app.processing.metadata import (
     build_citation,
     create_chunk_id,
     create_document_id,
-    enrich_document,
+    enrich_metadata,
     enrich_documents,
+    enrich_document,
 )
 
 from app.processing.visual_processor import (
