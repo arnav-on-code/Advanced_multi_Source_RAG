@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from functools import lru_cache
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.logging import get_logger
@@ -14,17 +18,31 @@ router = APIRouter(
 logger = get_logger(__name__)
 
 
+@lru_cache(maxsize=1)
 def get_rag_pipeline() -> RAGPipeline:
     """
     Return the application's configured RAG pipeline.
 
-    This function is overridden during application startup
-    or testing through FastAPI dependency injection.
+    The pipeline is created lazily and cached so expensive
+    components such as embeddings, vector stores, retrievers,
+    and LLM configuration are not initialized at import time.
+
+    Tests can override this dependency using:
+        app.dependency_overrides[get_rag_pipeline] = ...
     """
 
-    raise RuntimeError(
-        "RAG pipeline dependency has not been configured."
-    )
+    try:
+        return RAGPipeline()
+
+    except Exception as exc:
+        logger.exception(
+            "Failed to initialize RAG pipeline: %s",
+            exc,
+        )
+
+        raise RuntimeError(
+            "RAG pipeline dependency has not been configured."
+        ) from exc
 
 
 @router.post(
@@ -33,9 +51,7 @@ def get_rag_pipeline() -> RAGPipeline:
 )
 async def query_rag(
     request: QueryRequest,
-    pipeline: RAGPipeline = Depends(
-        get_rag_pipeline
-    ),
+    pipeline: RAGPipeline = Depends(get_rag_pipeline),
 ) -> QueryResponse:
     """
     Query the multi-source RAG system.
@@ -52,32 +68,30 @@ async def query_rag(
     """
 
     try:
+        metadata_filter = (
+            request.metadata_filter.model_dump(
+                exclude_none=True
+            )
+            if request.metadata_filter
+            else None
+        )
+
         result = pipeline.invoke(
             query=request.query,
             top_k=request.top_k,
             use_reranking=request.use_reranking,
-            metadata_filter=(
-                request.metadata_filter.model_dump(
-                    exclude_none=True
-                )
-                if request.metadata_filter
-                else None
-            ),
+            metadata_filter=metadata_filter,
         )
 
         sources = [
-            QuerySource(
-                **source
-            )
+            QuerySource(**source)
             for source in result.sources
         ]
 
         return QueryResponse(
             answer=result.answer,
             sources=sources,
-            retrieved_documents=(
-                result.retrieved_documents
-            ),
+            retrieved_documents=result.retrieved_documents,
         )
 
     except ValueError as exc:
@@ -104,7 +118,8 @@ async def query_rag(
 
     except Exception as exc:
         logger.exception(
-            "Unexpected RAG query error."
+            "Unexpected RAG query error: %s",
+            exc,
         )
 
         raise HTTPException(

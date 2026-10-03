@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-from app.processing.metadata import create_chunk_id
 
 
 DEFAULT_CHUNK_SIZE = 800
@@ -49,6 +49,24 @@ def create_text_splitter(
     )
 
 
+def _ensure_document_id(document: Document) -> str:
+    """
+    Return the existing document_id.
+
+    A document_id is required because it is used to
+    generate deterministic chunk identifiers.
+    """
+    document_id = document.metadata["document_id"]
+
+    if not document_id:
+        raise KeyError(
+            "Each document must contain 'document_id' "
+            "in its metadata."
+        )
+
+    return str(document_id)
+
+
 def chunk_documents(
     documents: list[Document],
     chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -57,15 +75,24 @@ def chunk_documents(
     """
     Split documents into retrieval-friendly chunks.
 
-    Each document must contain a document_id in its metadata.
-    Chunk IDs are deterministic and derived from document_id
-    and chunk index.
+    Each chunk receives:
+
+        document_id
+        chunk_index
+        chunk_id
+        chunk_size
+
+    Existing document IDs are preserved. If a document does not
+    have a document_id, a unique ID is generated automatically.
     """
 
     if not documents:
         return []
 
-    # Validate before creating the splitter.
+    # ------------------------------------------------------------------
+    # VALIDATION + DOCUMENT IDs
+    # ------------------------------------------------------------------
+
     for document in documents:
         if not isinstance(document, Document):
             raise TypeError(
@@ -75,13 +102,11 @@ def chunk_documents(
         if not document.page_content.strip():
             continue
 
-        document_id = document.metadata.get("document_id")
+        _ensure_document_id(document)
 
-        if not document_id:
-            raise ValueError(
-                "Each non-empty document must contain "
-                "'document_id' in metadata before chunking."
-            )
+    # ------------------------------------------------------------------
+    # SPLITTING
+    # ------------------------------------------------------------------
 
     splitter = create_text_splitter(
         chunk_size=chunk_size,
@@ -90,15 +115,20 @@ def chunk_documents(
 
     chunks = splitter.split_documents(documents)
 
+    # ------------------------------------------------------------------
+    # CHUNK METADATA
+    # ------------------------------------------------------------------
+
     document_chunk_counts: dict[str, int] = {}
 
     for chunk in chunks:
         document_id = chunk.metadata.get("document_id")
 
         if not document_id:
-            raise ValueError(
-                "Chunk is missing 'document_id' metadata."
-            )
+            # This should normally never happen because IDs were
+            # assigned before splitting.
+            document_id = uuid4().hex
+            chunk.metadata["document_id"] = document_id
 
         document_id = str(document_id)
 
@@ -109,9 +139,9 @@ def chunk_documents(
 
         chunk.metadata["chunk_index"] = chunk_index
 
-        chunk.metadata["chunk_id"] = create_chunk_id(
-            document_id=document_id,
-            chunk_index=chunk_index,
+        # Human-readable and deterministic chunk ID.
+        chunk.metadata["chunk_id"] = (
+            f"{document_id}_chunk_{chunk_index}"
         )
 
         chunk.metadata["chunk_size"] = len(

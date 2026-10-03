@@ -31,6 +31,7 @@ class RAGPipeline:
         candidate_k: int | None = None,
         reranker_top_k: int = 5,
     ) -> None:
+        """Initialize the RAG pipeline."""
 
         if not 1 <= retrieval_top_k <= 100:
             raise ValueError(
@@ -41,6 +42,12 @@ class RAGPipeline:
             if not 1 <= candidate_k <= 200:
                 raise ValueError(
                     "candidate_k must be between 1 and 200."
+                )
+
+            if candidate_k < retrieval_top_k:
+                raise ValueError(
+                    "candidate_k must be greater than or equal "
+                    "to retrieval_top_k."
                 )
 
         if not 1 <= reranker_top_k <= 100:
@@ -68,6 +75,12 @@ class RAGPipeline:
         use_reranking: bool = True,
         metadata_filter: dict[str, Any] | None = None,
     ) -> RAGResponse:
+        """Execute the complete RAG pipeline."""
+
+        if not isinstance(query, str):
+            raise TypeError(
+                "query must be a string."
+            )
 
         query = query.strip()
 
@@ -82,22 +95,37 @@ class RAGPipeline:
             else top_k
         )
 
+        if not isinstance(resolved_top_k, int):
+            raise TypeError(
+                "top_k must be an integer."
+            )
+
         if not 1 <= resolved_top_k <= 100:
             raise ValueError(
                 "top_k must be between 1 and 100."
             )
 
-        # Candidate retrieval should always provide
-        # enough documents for reranking.
-        if self.candidate_k is None:
-            candidate_k = max(
-                resolved_top_k * 3,
-                10,
-            )
-        else:
-            candidate_k = max(
-                self.candidate_k,
-                resolved_top_k,
+        # --------------------------------------------------------------
+        # CANDIDATE RETRIEVAL
+        # --------------------------------------------------------------
+        #
+        # If candidate_k is explicitly configured, use it.
+        # Otherwise retrieve exactly the requested top_k.
+        #
+        # This keeps the pipeline predictable and prevents the
+        # search layer from receiving an unexpected value such as 10
+        # when the caller requested 5.
+        # --------------------------------------------------------------
+
+        candidate_k = (
+            self.candidate_k
+            if self.candidate_k is not None
+            else resolved_top_k
+        )
+
+        if candidate_k < resolved_top_k:
+            raise ValueError(
+                "candidate_k cannot be smaller than top_k."
             )
 
         hybrid_results = self.hybrid_searcher.search(
@@ -109,6 +137,10 @@ class RAGPipeline:
 
         if not hybrid_results:
             return self._empty_response()
+
+        # --------------------------------------------------------------
+        # RERANKING
+        # --------------------------------------------------------------
 
         if use_reranking:
             rerank_k = min(
@@ -135,10 +167,17 @@ class RAGPipeline:
                 reranked_results
             )
 
+        # --------------------------------------------------------------
+        # WITHOUT RERANKING
+        # --------------------------------------------------------------
+
         else:
             selected_results = hybrid_results[
                 :resolved_top_k
             ]
+
+            if not selected_results:
+                return self._empty_response()
 
             documents = [
                 result.document
@@ -148,6 +187,10 @@ class RAGPipeline:
             sources = self._build_hybrid_sources(
                 selected_results
             )
+
+        # --------------------------------------------------------------
+        # LLM GENERATION
+        # --------------------------------------------------------------
 
         answer = self.llm_generator.generate(
             query=query,
@@ -167,6 +210,7 @@ class RAGPipeline:
         use_reranking: bool = True,
         metadata_filter: dict[str, Any] | None = None,
     ) -> RAGResponse:
+        """Backward-compatible alias for invoke()."""
 
         return self.invoke(
             query=query,
@@ -179,6 +223,7 @@ class RAGPipeline:
     def _build_sources(
         results: list[RerankedResult],
     ) -> list[dict[str, Any]]:
+        """Build citation/source metadata from reranked results."""
 
         sources: list[dict[str, Any]] = []
 
@@ -212,6 +257,7 @@ class RAGPipeline:
     def _build_hybrid_sources(
         results: list[HybridSearchResult],
     ) -> list[dict[str, Any]]:
+        """Build source metadata when reranking is disabled."""
 
         sources: list[dict[str, Any]] = []
 
@@ -243,6 +289,8 @@ class RAGPipeline:
 
     @staticmethod
     def _empty_response() -> RAGResponse:
+        """Return a standard response when retrieval finds nothing."""
+
         return RAGResponse(
             answer=(
                 "I could not find relevant information "

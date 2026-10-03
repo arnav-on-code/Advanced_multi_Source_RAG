@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import sys
 
@@ -28,7 +30,15 @@ def configure_logging() -> None:
     )
 
 
-def get_logger(name: str) -> logging.Logger:
-    """Return a named application logger."""
+def get_logger(
+    name: str | None = None,
+) -> logging.Logger:
+    """
+    Return a named application logger.
 
-    return logging.getLogger(name)
+    If no name is provided, use the application root logger.
+    """
+
+    return logging.getLogger(
+        name if name else settings.app_name
+    )

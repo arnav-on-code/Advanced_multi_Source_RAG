@@ -11,7 +11,6 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
-
 from langchain_core.documents import Document
 
 from app.core.config import settings
@@ -21,6 +20,7 @@ from app.core.exceptions import (
     UnsupportedSourceError,
 )
 from app.core.logging import get_logger
+
 from app.loaders.csv_loader import load_csv
 from app.loaders.docx_loader import load_docx
 from app.loaders.json_loader import load_json
@@ -28,6 +28,7 @@ from app.loaders.pdf_loader import load_pdf
 from app.loaders.txt_loader import load_txt
 from app.loaders.url_loader import load_url
 from app.loaders.youtube_loader import load_youtube
+
 from app.processing.chunker import chunk_documents
 from app.processing.cleaner import clean_documents
 from app.processing.metadata import enrich_documents
@@ -40,30 +41,31 @@ router = APIRouter(
 
 logger = get_logger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# CONSTANTS
+# ---------------------------------------------------------------------------
+
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 
-FILE_LOADERS: dict[
-    str,
-    Callable[[str | Path], list[Document]],
-] = {
-    "pdf": load_pdf,
-    "docx": load_docx,
-    "csv": load_csv,
-    "txt": load_txt,
-    "json": load_json,
+# ---------------------------------------------------------------------------
+# LOADER REGISTRY
+# ---------------------------------------------------------------------------
+
+FILE_LOADERS: dict[str, str] = {
+    "pdf": "load_pdf",
+    "docx": "load_docx",
+    "csv": "load_csv",
+    "txt": "load_txt",
+    "json": "load_json",
 }
 
-
-URL_LOADERS: dict[
-    str,
-    Callable[[str], list[Document]],
-] = {
-    "url": load_url,
-    "youtube": load_youtube,
+URL_LOADERS: dict[str, str] = {
+    "url": "load_url",
+    "youtube": "load_youtube",
 }
-
 
 FILE_EXTENSIONS: dict[str, str] = {
     "pdf": ".pdf",
@@ -74,10 +76,14 @@ FILE_EXTENSIONS: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# SOURCE VALIDATION
+# ---------------------------------------------------------------------------
+
 def _validate_source_type(
     source_type: str | None,
 ) -> str:
-    """Validate and normalize the source type."""
+    """Validate and normalize the requested source type."""
 
     if source_type is None:
         raise HTTPException(
@@ -105,22 +111,25 @@ def _validate_source_type(
     return normalized
 
 
+# ---------------------------------------------------------------------------
+# FILE UPLOAD
+# ---------------------------------------------------------------------------
+
 async def _save_upload(
     file: UploadFile,
     extension: str,
 ) -> Path:
     """
-    Save an uploaded file to a temporary location.
+    Save an uploaded file to a temporary path.
 
-    The upload is written in chunks so the complete file
-    does not need to be loaded into memory.
+    The temporary file is closed before writing so the implementation
+    behaves correctly on Windows and other platforms with stricter
+    file-locking semantics.
     """
 
     filename = file.filename or "uploaded"
 
-    actual_extension = (
-        Path(filename).suffix.lower()
-    )
+    actual_extension = Path(filename).suffix.lower()
 
     if actual_extension != extension:
         raise HTTPException(
@@ -136,47 +145,73 @@ async def _save_upload(
         delete=False,
     )
 
-    temporary_path = Path(
-        temporary_file.name
-    )
+    temporary_path = Path(temporary_file.name)
 
-    total_size = 0
+    # Close the NamedTemporaryFile immediately.
+    # This is important on Windows because the file must not remain
+    # open while we later write/delete it.
+    temporary_file.close()
 
     try:
-        while True:
-            chunk = await file.read(
-                UPLOAD_CHUNK_SIZE
-            )
+        total_size = 0
 
-            if not chunk:
-                break
+        with temporary_path.open("wb") as output_file:
+            while True:
+                chunk = await file.read(UPLOAD_CHUNK_SIZE)
 
-            total_size += len(chunk)
+                if not chunk:
+                    break
 
-            if total_size > MAX_UPLOAD_SIZE:
-                raise HTTPException(
-                    status_code=413,
-                    detail=(
-                        "Uploaded file exceeds the "
-                        "50 MB size limit."
-                    ),
-                )
+                total_size += len(chunk)
 
-            temporary_file.write(chunk)
+                if total_size > MAX_UPLOAD_SIZE:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            "Uploaded file exceeds the "
+                            "50 MB size limit."
+                        ),
+                    )
 
-        temporary_file.flush()
+                output_file.write(chunk)
+
+            output_file.flush()
+
+        return temporary_path
+
+    except HTTPException:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
     except Exception:
-        temporary_path.unlink(
-            missing_ok=True
-        )
+        temporary_path.unlink(missing_ok=True)
         raise
 
     finally:
-        temporary_file.close()
         await file.close()
 
-    return temporary_path
+
+# ---------------------------------------------------------------------------
+# LOADER RESOLUTION
+# ---------------------------------------------------------------------------
+
+def _resolve_loader(
+    loader_name: str,
+) -> Callable:
+    """
+    Resolve the current loader function.
+
+    Using globals() here means tests can monkeypatch the imported
+    loader function and the ingestion endpoint will use the patched
+    function instead of a stale function captured at import time.
+    """
+
+    loader = globals().get(loader_name)
+
+    if not callable(loader):
+        raise UnsupportedSourceError(loader_name)
+
+    return loader
 
 
 def _load_file_source(
@@ -185,12 +220,12 @@ def _load_file_source(
 ) -> list[Document]:
     """Load a supported file source."""
 
-    loader = FILE_LOADERS.get(source_type)
+    loader_name = FILE_LOADERS.get(source_type)
 
-    if loader is None:
-        raise UnsupportedSourceError(
-            source_type
-        )
+    if loader_name is None:
+        raise UnsupportedSourceError(source_type)
+
+    loader = _resolve_loader(loader_name)
 
     return loader(file_path)
 
@@ -201,15 +236,19 @@ def _load_url_source(
 ) -> list[Document]:
     """Load a supported URL-based source."""
 
-    loader = URL_LOADERS.get(source_type)
+    loader_name = URL_LOADERS.get(source_type)
 
-    if loader is None:
-        raise UnsupportedSourceError(
-            source_type
-        )
+    if loader_name is None:
+        raise UnsupportedSourceError(source_type)
+
+    loader = _resolve_loader(loader_name)
 
     return loader(source)
 
+
+# ---------------------------------------------------------------------------
+# INGESTION ENDPOINT
+# ---------------------------------------------------------------------------
 
 @router.post("/")
 async def ingest_source(
@@ -221,18 +260,38 @@ async def ingest_source(
     Ingest and preprocess a supported source.
 
     Supported sources:
-        PDF, URL, YouTube, DOCX, CSV, TXT, JSON
+        PDF
+        URL
+        YouTube
+        DOCX
+        CSV
+        TXT
+        JSON
+
+    Pipeline:
+
+        Source
+          ↓
+        Loader
+          ↓
+        Cleaning
+          ↓
+        Metadata enrichment
+          ↓
+        Chunking
+          ↓
+        Processed documents
     """
 
     temporary_path: Path | None = None
 
     try:
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
         # SOURCE TYPE
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
 
-        normalized_source_type = (
-            _validate_source_type(source_type)
+        normalized_source_type = _validate_source_type(
+            source_type
         )
 
         source_value = (
@@ -249,9 +308,9 @@ async def ingest_source(
             normalized_source_type in URL_LOADERS
         )
 
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
         # REQUEST VALIDATION
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
 
         if is_file_source:
 
@@ -293,18 +352,16 @@ async def ingest_source(
                     ),
                 )
 
-        # -----------------------------------------------------
-        # FILE SOURCE
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
+        # LOAD SOURCE
+        # ---------------------------------------------------------------
 
         if is_file_source:
             assert file is not None
 
             filename = file.filename or ""
 
-            extension = (
-                Path(filename).suffix.lower()
-            )
+            extension = Path(filename).suffix.lower()
 
             expected_extension = FILE_EXTENSIONS[
                 normalized_source_type
@@ -329,10 +386,6 @@ async def ingest_source(
                 temporary_path,
             )
 
-        # -----------------------------------------------------
-        # URL / YOUTUBE SOURCE
-        # -----------------------------------------------------
-
         else:
             assert source_value is not None
 
@@ -341,22 +394,20 @@ async def ingest_source(
                 source_value,
             )
 
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
         # DOCUMENT VALIDATION
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
 
         if not documents:
             raise ProcessingError(
                 "The source produced no documents."
             )
 
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
         # CLEANING
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
 
-        documents = clean_documents(
-            documents
-        )
+        documents = clean_documents(documents)
 
         if not documents:
             raise ProcessingError(
@@ -364,17 +415,15 @@ async def ingest_source(
                 "after cleaning."
             )
 
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
         # METADATA
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
 
-        documents = enrich_documents(
-            documents
-        )
+        documents = enrich_documents(documents)
 
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
         # CHUNKING
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
 
         chunks = chunk_documents(
             documents,
@@ -387,9 +436,9 @@ async def ingest_source(
                 "No usable chunks were produced."
             )
 
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
         # SUCCESS
-        # -----------------------------------------------------
+        # ---------------------------------------------------------------
 
         logger.info(
             "Source ingestion completed | "
@@ -409,16 +458,16 @@ async def ingest_source(
             ),
         }
 
-    # ---------------------------------------------------------
+    # -------------------------------------------------------------------
     # EXPECTED HTTP ERRORS
-    # ---------------------------------------------------------
+    # -------------------------------------------------------------------
 
     except HTTPException:
         raise
 
-    # ---------------------------------------------------------
-    # EXPECTED PROCESSING ERRORS
-    # ---------------------------------------------------------
+    # -------------------------------------------------------------------
+    # EXPECTED APPLICATION ERRORS
+    # -------------------------------------------------------------------
 
     except (
         FileNotFoundError,
@@ -440,16 +489,17 @@ async def ingest_source(
             detail=str(exc),
         ) from exc
 
-    # ---------------------------------------------------------
+    # -------------------------------------------------------------------
     # UNEXPECTED ERRORS
-    # ---------------------------------------------------------
+    # -------------------------------------------------------------------
 
     except Exception as exc:
 
         logger.exception(
             "Unexpected ingestion failure | "
-            "type=%s",
+            "type=%s | error=%s",
             source_type,
+            exc,
         )
 
         raise HTTPException(
@@ -457,9 +507,9 @@ async def ingest_source(
             detail="Failed to process the source.",
         ) from exc
 
-    # ---------------------------------------------------------
-    # TEMP FILE CLEANUP
-    # ---------------------------------------------------------
+    # -------------------------------------------------------------------
+    # TEMPORARY FILE CLEANUP
+    # -------------------------------------------------------------------
 
     finally:
 
