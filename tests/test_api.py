@@ -5,7 +5,38 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.api.query import get_rag_pipeline
 from app.pipeline.rag_pipeline import RAGResponse
+import pytest
 
+
+
+class MockValidationPipeline:
+    def invoke(
+        self,
+        query,
+        top_k=None,
+        use_reranking=True,
+        metadata_filter=None,
+    ):
+        return RAGResponse(
+            answer="test",
+            sources=[],
+            retrieved_documents=0,
+        )
+
+
+app.dependency_overrides[get_rag_pipeline] = (
+    lambda: MockValidationPipeline()
+)
+
+@pytest.fixture(autouse=True)
+def override_rag_pipeline():
+    app.dependency_overrides[get_rag_pipeline] = (
+        lambda: MockValidationPipeline()
+    )
+
+    yield
+
+    app.dependency_overrides.clear()
 
 client = TestClient(app)
 

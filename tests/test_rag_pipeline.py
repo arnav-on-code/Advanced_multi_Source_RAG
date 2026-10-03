@@ -34,7 +34,7 @@ def test_rag_pipeline():
             metadata_filter=None,
         ):
             assert query == "What is FastAPI?"
-            assert top_k == 5
+            assert top_k == 10
             assert candidate_k == 10
             assert metadata_filter is None
 
