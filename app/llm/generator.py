@@ -1,4 +1,6 @@
+import json
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -90,9 +92,7 @@ class LLMGenerator:
         self,
         documents: list[Document],
     ) -> str:
-        """
-        Build a structured and size-limited context block.
-        """
+        """Build a structured and size-limited context block."""
 
         context_parts: list[str] = []
         current_length = 0
@@ -108,14 +108,15 @@ class LLMGenerator:
 
             metadata = document.metadata
 
-            source_type = metadata.get(
-                "source_type",
-                "unknown",
+            source_type = str(
+                metadata.get(
+                    "source_type",
+                    "unknown",
+                )
             )
 
-            citation = metadata.get(
-                "citation",
-                {},
+            citation = self._normalize_citation(
+                metadata.get("citation")
             )
 
             source_label = (
@@ -150,8 +151,9 @@ class LLMGenerator:
                 )
 
                 if remaining > 500:
-                    source_block = source_block[:remaining]
-                    context_parts.append(source_block)
+                    context_parts.append(
+                        source_block[:remaining]
+                    )
 
                 break
 
@@ -159,6 +161,40 @@ class LLMGenerator:
             current_length += block_length
 
         return "\n\n---\n\n".join(context_parts)
+
+    @staticmethod
+    def _normalize_citation(
+        citation: Any,
+    ) -> dict[str, Any]:
+        """
+        Normalize citation metadata into a dictionary.
+
+        Chroma-safe metadata may contain dictionaries serialized
+        as JSON strings, so both formats are supported.
+        """
+
+        if citation is None:
+            return {}
+
+        if isinstance(citation, dict):
+            return citation
+
+        if isinstance(citation, str):
+            citation = citation.strip()
+
+            if not citation:
+                return {}
+
+            try:
+                parsed = json.loads(citation)
+
+                if isinstance(parsed, dict):
+                    return parsed
+
+            except json.JSONDecodeError:
+                pass
+
+        return {}
 
     @staticmethod
     def _extract_content(response: object) -> str:

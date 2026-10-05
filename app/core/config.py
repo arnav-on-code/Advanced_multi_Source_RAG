@@ -175,6 +175,8 @@ class Settings(BaseSettings):
 
     llm_model: str = "llama3.2"
 
+    ollama_base_url: str = "http://localhost:11434"
+
     llm_temperature: float = Field(
         default=0.0,
         ge=0.0,

@@ -33,6 +33,8 @@ from app.processing.chunker import chunk_documents
 from app.processing.cleaner import clean_documents
 from app.processing.metadata import enrich_documents
 
+from app.embeddings.embedder import get_embedding_model
+from app.vectorstore.chroma import ChromaVectorStore
 
 router = APIRouter(
     prefix="/ingest",
@@ -79,6 +81,22 @@ FILE_EXTENSIONS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # SOURCE VALIDATION
 # ---------------------------------------------------------------------------
+
+
+def _get_vector_store() -> ChromaVectorStore:
+    """
+    Create the configured ChromaDB vector store.
+    """
+
+    embeddings = get_embedding_model(
+        settings.embedding_model
+    )
+
+    return ChromaVectorStore(
+        embedding_function=embeddings,
+        persist_directory=settings.chroma_persist_directory,
+        collection_name=settings.chroma_collection_name,
+    )
 
 def _validate_source_type(
     source_type: str | None,
@@ -436,16 +454,42 @@ async def ingest_source(
                 "No usable chunks were produced."
             )
 
+        # -----------------------------------------------------
+        # VECTOR STORE
+        # -----------------------------------------------------
+
+        vector_store = _get_vector_store()
+
+        stored_ids = vector_store.upsert_documents(
+            documents=chunks,
+        )
+
+        if not stored_ids:
+            raise ProcessingError(
+                "Chunks were processed but could not be stored "
+                "in ChromaDB."
+            )
+
+        stored_count = vector_store.count()
+
+        if stored_count == 0:
+            raise ProcessingError(
+                "ChromaDB contains no documents after ingestion."
+            )
+
         # ---------------------------------------------------------------
         # SUCCESS
         # ---------------------------------------------------------------
 
         logger.info(
             "Source ingestion completed | "
-            "type=%s | documents=%d | chunks=%d",
+            "type=%s | documents=%d | chunks=%d | "
+            "stored=%d | chroma_total=%d",
             normalized_source_type,
             len(documents),
             len(chunks),
+            len(stored_ids),
+            stored_count,
         )
 
         return {
@@ -453,11 +497,13 @@ async def ingest_source(
             "source_type": normalized_source_type,
             "documents": len(documents),
             "chunks": len(chunks),
+            "stored_chunks": len(stored_ids),
+            "chroma_total": stored_count,
             "message": (
-                "Source loaded and processed successfully."
+                "Source loaded, processed, embedded, "
+                "and stored successfully."
             ),
         }
-
     # -------------------------------------------------------------------
     # EXPECTED HTTP ERRORS
     # -------------------------------------------------------------------
