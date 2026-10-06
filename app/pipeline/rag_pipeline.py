@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -108,14 +109,6 @@ class RAGPipeline:
         # --------------------------------------------------------------
         # CANDIDATE RETRIEVAL
         # --------------------------------------------------------------
-        #
-        # If candidate_k is explicitly configured, use it.
-        # Otherwise retrieve exactly the requested top_k.
-        #
-        # This keeps the pipeline predictable and prevents the
-        # search layer from receiving an unexpected value such as 10
-        # when the caller requested 5.
-        # --------------------------------------------------------------
 
         candidate_k = (
             self.candidate_k
@@ -220,6 +213,39 @@ class RAGPipeline:
         )
 
     @staticmethod
+    def _normalize_citation(
+        citation: Any,
+    ) -> dict[str, Any] | None:
+        """
+        Normalize citation metadata into a dictionary.
+
+        Chroma may return dictionary metadata as a JSON string
+        because nested metadata is serialized before storage.
+        """
+
+        if citation is None:
+            return None
+
+        if isinstance(citation, dict):
+            return citation
+
+        if isinstance(citation, str):
+            citation = citation.strip()
+
+            if not citation:
+                return None
+
+            try:
+                parsed = json.loads(citation)
+            except json.JSONDecodeError:
+                return None
+
+            if isinstance(parsed, dict):
+                return parsed
+
+        return None
+
+    @staticmethod
     def _build_sources(
         results: list[RerankedResult],
     ) -> list[dict[str, Any]]:
@@ -239,7 +265,9 @@ class RAGPipeline:
                 "source": metadata.get("source"),
                 "file_name": metadata.get("file_name"),
                 "page": metadata.get("page"),
-                "citation": metadata.get("citation"),
+                "citation": RAGPipeline._normalize_citation(
+                    metadata.get("citation")
+                ),
                 "chunk_id": metadata.get("chunk_id"),
             }
 
@@ -273,7 +301,9 @@ class RAGPipeline:
                 "source": metadata.get("source"),
                 "file_name": metadata.get("file_name"),
                 "page": metadata.get("page"),
-                "citation": metadata.get("citation"),
+                "citation": RAGPipeline._normalize_citation(
+                    metadata.get("citation")
+                ),
                 "chunk_id": metadata.get("chunk_id"),
             }
 
