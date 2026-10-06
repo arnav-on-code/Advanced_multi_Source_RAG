@@ -40,7 +40,6 @@ class VectorSearcher:
         collection_name: str = DEFAULT_COLLECTION_NAME,
         embedding_model: str = DEFAULT_EMBEDDING_MODEL,
     ) -> None:
-
         embeddings = get_embedding_model(embedding_model)
 
         self.vectorstore = ChromaVectorStore(
@@ -60,7 +59,9 @@ class VectorSearcher:
         query = query.strip()
 
         if not query:
-            raise ValueError("Search query cannot be empty.")
+            raise ValueError(
+                "Search query cannot be empty."
+            )
 
         if not 1 <= top_k <= 100:
             raise ValueError(
@@ -70,7 +71,7 @@ class VectorSearcher:
         results = self.vectorstore.similarity_search_with_score(
             query=query,
             k=top_k,
-            filter=metadata_filter,
+            metadata_filter=metadata_filter,
         )
 
         return [
